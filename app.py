@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import io
 
 #############################
-# Funciones para la SOPA DE LETRAS
+# Funciones para la SOPA DE LETRAS (16x16)
 #############################
 def generate_word_search(words, size=16):
     # Inicializa la grid y la matriz de resaltado
@@ -34,7 +34,7 @@ def generate_word_search(words, size=16):
                         highlight[r + dr*i][c + dc*i] = True
                     placed = True
         # Si no se puede colocar, se omite la palabra
-    # Rellenar celdas vacías con letras aleatorias en la sopa de letras
+    # Rellenar celdas vacías con letras aleatorias
     for i in range(size):
         for j in range(size):
             if grid[i][j] == '':
@@ -42,7 +42,7 @@ def generate_word_search(words, size=16):
     return grid, highlight
 
 #############################
-# Funciones para el CRUCIGRAMA
+# Funciones para el CRUCIGRAMA (16x16)
 #############################
 def can_place_word(word, row, col, orient, grid):
     size = len(grid)
@@ -77,73 +77,87 @@ def place_word(word, row, col, orient, grid):
             positions.append((row+i, col))
     return positions
 
-def generate_crossword(words, grid_size=20):
+def generate_crossword_dynamic(words, grid_size=16):
     """
-    Algoritmo simplificado:
-      1. Coloca la primera palabra horizontal en el centro.
-      2. Para cada palabra siguiente, intenta intersecar con alguna ya colocada:
-         - Se recorre cada letra de la palabra candidata y de las palabras ya colocadas.
-         - Si hay coincidencia, se intenta colocar la candidata en sentido perpendicular.
-      3. Si no se logra intersecar, se coloca en la primera fila donde quepa horizontalmente.
-    Nota: Las celdas vacías se dejan en blanco.
+    Algoritmo mejorado:
+      1. Se ordenan las palabras (sin espacios) de mayor a menor.
+      2. La primera se coloca horizontal en el centro.
+      3. Para cada palabra nueva se recorre el conjunto de palabras ya colocadas (en orden aleatorio)
+         y se prueban todas las intersecciones posibles. Se asigna un bonus si la intersección se da en
+         los extremos (inicio o fin) de la palabra candidata o de la palabra ya colocada.
+      4. Se elige la colocación con mayor puntaje.
+      5. Si no se encuentra ninguna intersección (es decir, la palabra no se conecta con ninguna ya colocada),
+         se omite esa palabra (asegurando que el crucigrama esté completamente interconectado).
+      Nota: Las celdas vacías se dejan en blanco.
     """
     grid = [[' ' for _ in range(grid_size)] for _ in range(grid_size)]
-    placements = []  # Cada elemento: (word, row, col, orient)
+    placements = []  # Cada elemento: (word, row, col, orient, positions)
     
-    # Colocar la primera palabra horizontal en el centro.
-    first = words[0].replace(" ", "").upper()
+    # Ordenar las palabras por longitud (sin espacios) de mayor a menor.
+    sorted_words = sorted([w.replace(" ", "").upper() for w in words], key=len, reverse=True)
+    
+    # Colocar la primera palabra horizontalmente en el centro.
+    first = sorted_words[0]
     row0 = grid_size // 2
     col0 = (grid_size - len(first)) // 2
     if not can_place_word(first, row0, col0, 'H', grid):
-        found = False
         for r in range(grid_size):
             for c in range(grid_size - len(first) + 1):
                 if can_place_word(first, r, c, 'H', grid):
                     row0, col0 = r, c
-                    found = True
                     break
-            if found:
-                break
-    place_word(first, row0, col0, 'H', grid)
-    placements.append((first, row0, col0, 'H'))
+            else:
+                continue
+            break
+    pos = place_word(first, row0, col0, 'H', grid)
+    placements.append((first, row0, col0, 'H', pos))
     
     # Para cada palabra restante:
-    for word in words[1:]:
-        candidate = word.replace(" ", "").upper()
-        placed = False
-        for placed_word, pr, pc, porient in placements:
-            for i, letter in enumerate(placed_word):
-                for j, cl in enumerate(candidate):
-                    if letter == cl:
+    for word in sorted_words[1:]:
+        best_score = -1
+        best_placement = None
+        # Recorre las palabras ya colocadas en orden aleatorio para no favorecer siempre la misma base.
+        current_placements = placements.copy()
+        random.shuffle(current_placements)
+        for placed_word, pr, pc, porient, ppos in current_placements:
+            for i, char_placed in enumerate(placed_word):
+                for j, char_candidate in enumerate(word):
+                    if char_placed == char_candidate:
+                        # Si la palabra colocada es horizontal, se intenta colocar la candidata vertical, y viceversa.
                         if porient == 'H':
+                            candidate_orient = 'V'
                             candidate_row = pr - j
                             candidate_col = pc + i
-                            new_orient = 'V'
                         else:
+                            candidate_orient = 'H'
                             candidate_row = pr + i
                             candidate_col = pc - j
-                            new_orient = 'H'
-                        if can_place_word(candidate, candidate_row, candidate_col, new_orient, grid):
-                            place_word(candidate, candidate_row, candidate_col, new_orient, grid)
-                            placements.append((candidate, candidate_row, candidate_col, new_orient))
-                            placed = True
-                            break
-                if placed:
-                    break
-            if placed:
-                break
-        if not placed:
-            # Colocar en la primera fila en la que quepa horizontalmente.
-            for r in range(grid_size):
-                for c in range(grid_size - len(candidate) + 1):
-                    if can_place_word(candidate, r, c, 'H', grid):
-                        place_word(candidate, r, c, 'H', grid)
-                        placements.append((candidate, r, c, 'H'))
-                        placed = True
-                        break
-                if placed:
-                    break
-    # No se rellenan celdas vacías para el crucigrama; se dejan en blanco.
+                        if can_place_word(word, candidate_row, candidate_col, candidate_orient, grid):
+                            # Calcular puntaje: bonus si la intersección ocurre en extremos.
+                            bonus = 0
+                            if j == 0 or j == len(word)-1:
+                                bonus += 2
+                            else:
+                                bonus += 1
+                            if i == 0 or i == len(placed_word)-1:
+                                bonus += 1
+                            score = bonus
+                            # Además, sumar 1 por cada letra ya existente en la posición propuesta.
+                            for k in range(len(word)):
+                                r_check = candidate_row + (k if candidate_orient == 'V' else 0)
+                                c_check = candidate_col + (k if candidate_orient == 'H' else 0)
+                                if grid[r_check][c_check] != ' ':
+                                    score += 1
+                            if score > best_score:
+                                best_score = score
+                                best_placement = (candidate_row, candidate_col, candidate_orient)
+        if best_placement:
+            r, c, orient = best_placement
+            pos = place_word(word, r, c, orient, grid)
+            placements.append((word, r, c, orient, pos))
+        else:
+            # Si no se encontró intersección, se omite la palabra para garantizar la interconexión.
+            st.write(f"La palabra '{word}' no se pudo conectar y fue omitida.")
     return grid, placements
 
 #############################
@@ -162,13 +176,13 @@ def grid_to_image(grid, highlight=None):
         cell.set_width(1/size)
         i, j = key
         if highlight is not None:
-            # Para la sopa de letras: si highlight[i][j] es True, fondo amarillo; de lo contrario blanco.
+            # Para la sopa de letras: si highlight[i][j] es True, fondo amarillo; de lo contrario, fondo blanco.
             if highlight[i][j]:
                 cell.set_facecolor("yellow")
             else:
                 cell.set_facecolor("white")
         else:
-            # Para el crucigrama: si la celda está en blanco, se pinta de plomo (#B0B0B0); si no, se deja blanca.
+            # Para el crucigrama: si la celda está en blanco, se pinta de plomo (#B0B0B0); si tiene letra, se deja blanca.
             if grid[i][j] == ' ':
                 cell.set_facecolor("#B0B0B0")
             else:
@@ -181,11 +195,10 @@ def grid_to_image(grid, highlight=None):
     plt.close(fig)
     return buf
 
-
 #############################
 # INTERFAZ CON STREAMLIT
 #############################
-st.title("Generador de Crucigrama y Sopa de Letras")
+st.title("Generador Dinámico de Crucigrama y Sopa de Letras (16x16)")
 
 titulo = st.text_input("Título (Opcional):")
 
@@ -213,17 +226,17 @@ if st.button("Generar Puzzles") and input_words:
         st.image(ws_buf_hl, caption="Sopa de Letras con Resaltado", use_container_width=True)
         st.download_button("Descargar Con Resaltado (PNG)", data=ws_buf_hl, file_name="sopa_con_resaltado.png", mime="image/png")
     
-    # --- CRUCIGRAMA ---
-    cw_grid, cw_placements = generate_crossword(input_words, grid_size=16)
+    # --- CRUCIGRAMA DINÁMICO ---
+    cw_grid, cw_placements = generate_crossword_dynamic(input_words, grid_size=16)
     cw_buf = grid_to_image(cw_grid)
     
-    st.subheader("Crucigrama (20x20)")
+    st.subheader("Crucigrama (16x16)")
     st.image(cw_buf, caption="Crucigrama", use_container_width=True)
     st.download_button("Descargar Crucigrama (PNG)", data=cw_buf, file_name="crucigrama.png", mime="image/png")
     
     st.subheader("Detalle de Palabras en el Crucigrama:")
     info = ""
-    for word, r, c, orient in cw_placements:
+    for word, r, c, orient, _ in cw_placements:
         orient_str = "Horizontal" if orient == 'H' else "Vertical"
         info += f"{word}: fila {r+1}, col {c+1} ({orient_str})\n"
     st.text(info)
